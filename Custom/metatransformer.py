@@ -109,16 +109,34 @@ class Transformer(nn.Module):
         return x
 
 class MetaTransformer(nn.Module):
-    def __init__(self, image_size, near_band, num_patches, num_classes, dim, depth, heads, mlp_dim, pool='cls', channels=1, dim_head = 16, dropout=0., emb_dropout=0., mode='ViT'):
+    def __init__(self, 
+                 chkpt_path ,
+                 image_size, 
+                 patch_size, 
+                 num_classes, 
+                 dim, 
+                 depth, 
+                 heads, 
+                 mlp_dim, 
+                 pool='cls', 
+                 channels=3, 
+                 dim_head = 16, 
+                 dropout=0., 
+                 emb_dropout=0., 
+                 mode='ViT'):
+
+        """Meta transformer for image data"""
         super().__init__()
 
-        patch_dim = image_size ** 2 * near_band
-        self.pos_embedding = nn.Parameter(torch.randn(1, num_patches + 1, dim))
+        self.Ns = int((image_size * image_size) / (patch_size * patch_size)) # num_of_patches 
+        self.patch_size = patch_size # patch_size: 16 x 16
+        patch_dim = self.patch_size ** 2 * channels
+        self.pos_embedding = nn.Parameter(torch.randn(1, self.Ns + 1, dim))
         self.patch_to_embedding = nn.Linear(patch_dim, dim)
         self.cls_token = nn.Parameter(torch.randn(1, 1, dim))
 
         self.dropout = nn.Dropout(emb_dropout)
-        self.transformer = Transformer(dim, depth, heads, dim_head, mlp_dim, dropout, num_patches, mode)
+        self.transformer = Transformer(dim, depth, heads, dim_head, mlp_dim, dropout, self.Ns, mode)
 
         self.pool = pool
         self.to_latent = nn.Identity()
@@ -128,7 +146,7 @@ class MetaTransformer(nn.Module):
             nn.Linear(dim, num_classes)
         )
         from timm.models.vision_transformer import Block
-        ckpt = torch.load("Meta-Transformer_base_patch16_encoder.pth")
+        ckpt = torch.load(chkpt_path)
         encoder = nn.Sequential(*[
                     Block(
                         dim=768,
@@ -143,10 +161,16 @@ class MetaTransformer(nn.Module):
         self.transformer = encoder
         for p in self.transformer.parameters():
             p.requires_grad = False
+
+
     def forward(self, x, mask = None):
        
         # patchs[batch, patch_num, patch_size*patch_size*c]  [batch,200,145*145]
         # x = rearrange(x, 'b c h w -> b c (h w)')
+
+        # arrange patches: [B, HW, C] -> [B, Ns, S*S*C]
+        x = x.view(x.shape[0], self.Ns, self.patch_size ** 2 * 3)
+        print('After rearranging: ', x.shape)
 
         ## embedding every patch vector to embedding size: [batch, patch_num, embedding_size]
         x = self.patch_to_embedding(x) #[b,n,dim]
